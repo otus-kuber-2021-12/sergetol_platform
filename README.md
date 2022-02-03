@@ -3,6 +3,32 @@
 sergetol Platform repository
 
 
+# HW03 (kubernetes-security)
+
+- использовался k8s кластер, поднятый с помощью `minukube`
+- написаны манифесты `01-sa-bob.yaml` для sa `bob` и `02-clusterrolebinding-bob-admin.yaml` для выдачи ему роли `admin` в рамках всего кластера
+- написан `03-sa-dave.yaml` для sa `dave`
+- написаны `01-ns-prometheus.yaml` для ns `prometheus` и `02-sa-carol.yaml` для sa `carol` в этом ns
+- написаны `03-clusterrole-view-pods.yaml` для clusterrole, позволяющей делать `get`, `list`, `watch` в отношении Pods всего кластера, а также `04-clusterrolebinding-prometheus-sa-view-pods.yaml` для привязки этой clusterrole ко всем sa из ns `prometheus`
+- написаны `01-ns-dev.yaml` для ns `dev`, `02-sa-jane.yaml` и `04-sa-ken.yaml` для sa `jane` и `ken`
+- написаны `03-rolebinding-jane-admin-dev.yaml` и `05-rolebinding-ken-view-dev.yaml` для выдачи sa `jane` роли `admin`, а sa `ken` роли `view` в рамках ns `dev`
+
+```
+minikube start
+
+cd kubernetes-security
+kubectl apply -f task01/
+kubectl apply -f task02/
+kubectl apply -f task03/
+
+# kubectl auth can-i get deployments --as system:serviceaccount:default:bob
+# kubectl auth can-i list pods --as system:serviceaccount:prometheus:carol -n prometheus
+# kubectl auth can-i create deployments --as system:serviceaccount:dev:ken -n dev
+
+minikube delete
+```
+
+
 # HW02 (kubernetes-controllers)
 
 - поднят k8s кластер с помощью `kind` согласно конфигурации kind-config.yaml
