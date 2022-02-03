@@ -8,5 +8,4 @@ roleRef:
   name: view-pods
 subjects:
 - kind: Group
-  name: system:serviceaccounts
-  namespace: prometheus
+  name: system:serviceaccounts:prometheus
