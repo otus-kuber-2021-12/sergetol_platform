@@ -3,6 +3,132 @@
 sergetol Platform repository
 
 
+# HW04 (kubernetes-networks)
+
+- по условию задания использовался k8s кластер, поднятый с помощью `minukube`
+- добавлены `livenessProbe` и `readinessProbe` в ранее созданный деплой `kubernetes-intro/web-pod.yml` пода приложения
+- написан Deployment для этого приложения
+- создан для приложения простой Service с типом `ClusterIP`, проверены различные варианты доступа по кластерному IP
+- установлен и настроен в `layer2` режиме балансировщик `MetalLB` для обслуживания Service с типом `LoadBalancer`
+- создан для нашего приложения Service с типом `LoadBalancer`, проверен доступ снаружи кластера
+- (*) создан Service с типом `LoadBalancer` для доступа снаружи к `CoreDNS`
+- установлен Ingress-контроллер из манифестов коробочного `ingress-nginx` и для него создан Service с типом `LoadBalancer`
+- создан для нашего приложения headless-сервис (`clusterIP: None`) и добавлен для него Ingress через префикс `/web`
+- (*) установлен `kubernetes-dashboard` из официальных манифестов и настроен для него Ingress через префикс `/dashboard`, проверен вход по токену
+- (*) реализовано канареечное развертывание с помощью `ingress-nginx`: в отдельном Namespace `staging` для нашего приложения добавлены такие же Deployment, headless-сервис и Ingress через тот же префикс `/web`, только в Ingress-манифесте добавлены соответствующие annotations `canary-by-header` для включения роутинга на staging-приложение по http-заголовку `x-env: staging`
+
+```
+minikube start
+
+cd kubernetes-networks
+
+kubectl apply -f web-deploy.yaml
+# kubectl get all
+# kubectl describe deployment web
+
+kubectl apply -f web-svc-cip.yaml
+# kubectl get svc web-svc-cip
+# kubectl describe svc web-svc-cip
+
+minikube ssh "curl http://$(kubectl get svc web-svc-cip -o=jsonpath='{.spec.clusterIP}')/health"
+minikube ssh "curl http://$(kubectl get svc web-svc-cip -o=jsonpath='{.spec.clusterIP}')/index.html"
+
+# https://metallb.universe.tf/installation/#preparation
+# kubectl -n kube-system get configmap kube-proxy -o yaml | sed -e 's/strictARP: false/strictARP: true/' | sed -e 's/mode: ""/mode: "ipvs"/' | kubectl -n kube-system diff -f -
+kubectl -n kube-system get configmap kube-proxy -o yaml | sed -e 's/strictARP: false/strictARP: true/' | sed -e 's/mode: ""/mode: "ipvs"/' | kubectl -n kube-system apply -f -
+kubectl -n kube-system exec $(kubectl get pods -n kube-system --selector='k8s-app=kube-proxy' -o=name) -- kube-proxy --cleanup
+kubectl -n kube-system delete pod --selector='k8s-app=kube-proxy'
+# kubectl -n kube-system get all
+
+# https://metallb.universe.tf/installation/
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.11.0/manifests/namespace.yaml
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.11.0/manifests/metallb.yaml
+# kubectl -n metallb-system get all
+
+# https://metallb.universe.tf/configuration/#layer-2-configuration
+kubectl apply -f metallb-config.yaml
+
+kubectl apply -f web-svc-lb.yaml
+# kubectl get svc web-svc-lb
+# kubectl describe svc web-svc-lb
+# kubectl -n metallb-system logs $(kubectl -n metallb-system get pod --selector='component=controller' -o=name)
+
+minikube ssh "curl http://$(kubectl get svc web-svc-lb -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')/health"
+minikube ssh "curl http://$(kubectl get svc web-svc-lb -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')/index.html"
+
+# https://minikube.sigs.k8s.io/docs/handbook/accessing/#loadbalancer-access
+minikube tunnel --alsologtostderr
+curl http://localhost/health
+curl http://localhost/index.html
+
+# https://metallb.universe.tf/usage/#ip-address-sharing
+kubectl apply -f coredns/kube-dns-lb.yaml
+# kubectl -n kube-system get svc --selector='k8s-app=kube-dns-lb'
+
+minikube ssh "nslookup web-svc-cip.default.svc.cluster.local 172.17.255.10"
+# minikube ssh "nslookup web-svc-lb.default.svc.cluster.local 172.17.255.10"
+
+# https://kubernetes.github.io/ingress-nginx/deploy/#bare-metal-clusters
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.1.1/deploy/static/provider/baremetal/deploy.yaml
+# kubectl -n ingress-nginx get all
+
+kubectl apply -f nginx-lb.yaml
+# kubectl -n ingress-nginx get svc ingress-nginx
+# kubectl -n ingress-nginx describe svc ingress-nginx
+
+minikube ssh "curl http://$(kubectl -n ingress-nginx get svc ingress-nginx -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')"
+minikube ssh "curl -k https://$(kubectl -n ingress-nginx get svc ingress-nginx -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')"
+
+kubectl apply -f web-svc-headless.yaml
+# kubectl get svc web-svc
+# kubectl describe svc web-svc
+
+# https://kubernetes.github.io/ingress-nginx/examples/rewrite/
+kubectl apply -f web-ingress.yaml
+# kubectl get ingress web
+# kubectl describe ingress web
+
+minikube ssh "curl http://$(kubectl -n ingress-nginx get svc ingress-nginx -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')/web/health"
+minikube ssh "curl http://$(kubectl -n ingress-nginx get svc ingress-nginx -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')/web/index.html"
+minikube ssh "curl -k https://$(kubectl -n ingress-nginx get svc ingress-nginx -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')/web/health"
+minikube ssh "curl -k https://$(kubectl -n ingress-nginx get svc ingress-nginx -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')/web/index.html"
+
+# https://github.com/kubernetes/dashboard
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.5.0/aio/deploy/recommended.yaml
+# kubectl -n kubernetes-dashboard get all
+# kubectl -n kubernetes-dashboard describe svc kubernetes-dashboard
+
+minikube ssh "curl -k https://$(kubectl -n kubernetes-dashboard get svc kubernetes-dashboard -o=jsonpath='{.spec.clusterIP}')"
+
+# https://github.com/kubernetes/dashboard/blob/master/docs/user/access-control/creating-sample-user.md
+kubectl apply -f dashboard/dashboard-admin.yaml
+
+# getting a Bearer Token:
+kubectl -n kubernetes-dashboard get secret $(kubectl -n kubernetes-dashboard get sa dashboard-admin -o=jsonpath='{.secrets[0].name}') -o=go-template='{{.data.token | base64decode}}'
+
+# https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#backend-protocol
+# https://kubernetes.github.io/ingress-nginx/examples/rewrite/
+# https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#configuration-snippet
+kubectl apply -f dashboard/dashboard-ingress.yaml
+# kubectl -n kubernetes-dashboard get ingress kubernetes-dashboard
+# kubectl -n kubernetes-dashboard describe ingress kubernetes-dashboard
+
+minikube ssh "curl -k https://$(kubectl -n ingress-nginx get svc ingress-nginx -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')/dashboard/"
+
+# https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#canary
+kubectl apply -f canary/web-staging.yaml
+# kubectl -n staging get all
+# kubectl -n staging get ingress
+
+minikube ssh "curl -s http://$(kubectl -n ingress-nginx get svc ingress-nginx -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')/web/index.html | grep POD_NAMESPACE"
+minikube ssh "curl -sk https://$(kubectl -n ingress-nginx get svc ingress-nginx -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')/web/index.html | grep POD_NAMESPACE"
+
+minikube ssh "curl -s --header 'x-env: staging' http://$(kubectl -n ingress-nginx get svc ingress-nginx -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')/web/index.html | grep POD_NAMESPACE"
+minikube ssh "curl -sk --header 'x-env: staging' https://$(kubectl -n ingress-nginx get svc ingress-nginx -o=jsonpath='{.status.loadBalancer.ingress[0].ip}')/web/index.html | grep POD_NAMESPACE"
+
+minikube delete
+```
+
 # HW03 (kubernetes-security)
 
 - использовался k8s кластер, поднятый с помощью `minukube`
