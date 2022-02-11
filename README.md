@@ -3,6 +3,43 @@
 sergetol Platform repository
 
 
+# HW05 (kubernetes-volumes)
+
+- использовался k8s кластер, поднятый с помощью `minukube`
+- задеплоен StatefulSet с `MinIO` (для него создался PVC и PV на этом PVC)
+- добавлен headless-сервис для `MinIO`
+- (*) модифицирован исходный StatefulSet: данные рутового пользователя берутся из соответствующего Secret
+
+```
+kind create cluster
+
+cd kubernetes-volumes
+
+kubectl apply -f minio-statefulset.yaml
+kubectl apply -f minio-headless-service.yaml
+
+kubectl wait --for=condition=Ready pod minio-0 --timeout=120s
+# kubectl get all --selector=app=minio
+# kubectl get pvc
+# kubectl get pv
+# kubectl describe secret minio-root
+kubectl logs minio-0
+
+# kubectl exec minio-0 -- env
+
+# kubectl run -ti --rm test --image=alpine --restart=Never -- wget -SO- http://minio:9000
+kubectl run -ti --rm test --image=alpine --restart=Never -- wget -SO- http://minio:9000/minio/health/live
+# kubectl run -ti --rm test --image=alpine --restart=Never -- wget -SO- http://minio:9000/minio/health/ready
+kubectl run -ti --rm test --image=alpine --restart=Never -- wget -SO- http://minio:9001
+
+# kubectl delete -f minio-headless-service.yaml
+# kubectl delete -f minio-statefulset.yaml
+# kubectl delete pvc data-minio-0
+
+kind delete cluster
+```
+
+
 # HW04 (kubernetes-networks)
 
 - по условию задания использовался k8s кластер, поднятый с помощью `minukube`
@@ -128,6 +165,7 @@ minikube ssh "curl -sk --header 'x-env: staging' https://$(kubectl -n ingress-ng
 
 minikube delete
 ```
+
 
 # HW03 (kubernetes-security)
 
